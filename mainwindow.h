@@ -36,8 +36,9 @@ class MainWindow : public QMainWindow
   protected:
     void hideEvent(QHideEvent *event);
 
-  private Q_SLOTS:
+  public Q_SLOTS:
     void updateContents(QModelIndex);
+    void openItem(QModelIndex);
   private:
     Ui::MainWindow *ui;
     QString m_lastPath;

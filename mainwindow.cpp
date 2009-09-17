@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QSettings>
 #include <QGLFramebufferObject>
+#include <QProcess>
 #include <QDebug>
 
 #include <openbabel/obconversion.h>
@@ -18,6 +19,7 @@
 #include <avogadro/glwidget.h>
 #include <avogadro/moleculefile.h>
 
+#include "fileitem.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -46,6 +48,8 @@ MainWindow::MainWindow(QWidget *parent)
   //m_glWidget->hide();
 
 
+
+  connect(ui->listWidget, SIGNAL(doubleClicked(QModelIndex)), this, SLOT(openItem(QModelIndex)));
 
 }
 
@@ -155,7 +159,7 @@ QPixmap MainWindow::getImage3D(const QString &fileName)
 
 void MainWindow::updateContents(QModelIndex index)
 {
-
+  // resize the first column to fit the contents
   ui->fileView->resizeColumnToContents(0);
   qDebug() << "updateContent";
   QFileSystemModel *model = static_cast<QFileSystemModel*>(ui->fileView->model());
@@ -164,14 +168,29 @@ void MainWindow::updateContents(QModelIndex index)
     ui->listWidget->clear();
     m_lastPath = model->filePath(index);
 
+    // add the new files
     QDir dir(model->filePath(index));
     dir.setFilter(QDir::Files);
     foreach (const QFileInfo &fileInfo, dir.entryInfoList()) {
       if (fileInfo.suffix().isEmpty())
         continue;
+      // handle png images as a special case (todo: compute if image is possible molecule)
       if (fileInfo.suffix() == "png") {
         new QListWidgetItem(QPixmap(fileInfo.absoluteFilePath()), fileInfo.fileName(), ui->listWidget);
         continue;
+      }
+
+      QProcess process;
+      QStringList arguments;
+      arguments << fileInfo.absoluteFilePath();
+      arguments << "-oxyz";
+      process.start("babel", arguments);
+      process.waitForFinished();
+      if (process.exitCode()) {
+        qDebug() << "skipping " << fileInfo.absoluteFilePath() << " bacause babel did not exit cleanly.";
+        continue;
+      } else {
+        qDebug() << "babel clean exit for " << fileInfo.absoluteFilePath();
       }
 
       QString fileName = fileInfo.absoluteFilePath();
@@ -192,8 +211,17 @@ void MainWindow::updateContents(QModelIndex index)
         continue;
 
       OpenBabel::OBMol mol;
-      if (!m_conv->ReadFile(&mol, fileInfo.absoluteFilePath().toAscii().data()))
+      std::ifstream ifs;
+      ifs.open(fileInfo.absoluteFilePath().toAscii().data());
+      if (!ifs) {
+        delete m_conv;
         continue;
+      }
+      if (!m_conv->Read(&mol, &ifs)) {
+        delete m_conv;
+        continue;
+      }
+      ifs.close();
 
       delete m_conv;
 
@@ -208,11 +236,31 @@ void MainWindow::updateContents(QModelIndex index)
       }
 
       if (!icon.isNull()) {
-        QListWidgetItem *item = new QListWidgetItem(icon, fileInfo.fileName(), ui->listWidget);
+        FileItem *item = new FileItem(icon, fileInfo.absoluteFilePath(), static_cast<FileItem::Dimension>(mol.GetDimension()), ui->listWidget);
       }
 
       qDebug() << fileInfo.absoluteFilePath();
       qDebug() << fileInfo.suffix();
     }
   }
+}
+
+void MainWindow::openItem(QModelIndex index)
+{
+  FileItem *item = static_cast<FileItem*>(ui->listWidget->currentItem());
+  if (!item) {
+    qDebug() << "Could not open item...";
+    return;
+  }
+
+  QString program;
+  if (item->is2D())
+    program = "molsketch";
+  if (item->is3D())
+    program = "avogadro";
+
+  QStringList args;
+  args << item->filePath();
+
+  QProcess::execute(program, args);
 }
